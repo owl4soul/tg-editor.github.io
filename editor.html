@@ -1,0 +1,212 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Редактор стикера</title>
+  <script src="https://telegram.org/js/telegram-web-app.js"></script>
+  <style>
+    body {
+      font-family: system-ui, -apple-system, sans-serif;
+      background: var(--tg-theme-bg-color, #fff);
+      color: var(--tg-theme-text-color, #000);
+      margin: 0;
+      padding: 20px;
+      box-sizing: border-box;
+    }
+    canvas {
+      max-width: 100%;
+      border: 1px solid #ccc;
+      display: block;
+      margin: 10px auto;
+      background: repeating-conic-gradient(#eee 0% 25%, transparent 0% 50%) 50% / 20px 20px;
+    }
+    .controls {
+      max-width: 400px;
+      margin: auto;
+    }
+    label {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      margin-bottom: 8px;
+      font-size: 14px;
+    }
+    input[type="range"] {
+      width: 150px;
+    }
+    button {
+      width: 100%;
+      padding: 12px;
+      background: var(--tg-theme-button-color, #2ea6ff);
+      color: var(--tg-theme-button-text-color, #fff);
+      border: none;
+      border-radius: 8px;
+      font-size: 16px;
+      cursor: pointer;
+      margin-top: 15px;
+    }
+    button:disabled {
+      opacity: 0.5;
+    }
+    .checkbox-group {
+      display: flex;
+      gap: 10px;
+      margin: 10px 0;
+    }
+    #applyBtn {
+      background: var(--tg-theme-button-color, #28a745);
+    }
+  </style>
+</head>
+<body>
+  <h3>🎨 Предпросмотр стикера</h3>
+  <canvas id="preview"></canvas>
+  <div class="controls">
+    <input type="file" id="upload" accept="image/*">
+    <label>Яркость <input type="range" id="brightness" min="-100" max="100" value="0"></label>
+    <label>Контраст <input type="range" id="contrast" min="-100" max="100" value="0"></label>
+    <label>Насыщенность <input type="range" id="saturation" min="-100" max="100" value="0"></label>
+    <label>Размытие <input type="range" id="blur" min="0" max="20" value="0" step="0.5"></label>
+    <label>Смещение тени <input type="range" id="shadow" min="0" max="50" value="0"></label>
+    <label>Рамка (px) <input type="range" id="border" min="0" max="20" value="0"></label>
+    <label>Скругление <input type="range" id="rounded" min="0" max="200" value="0"></label>
+    <div class="checkbox-group">
+      <label><input type="checkbox" id="grayscale"> Ч/Б</label>
+      <label><input type="checkbox" id="circle"> Круг</label>
+    </div>
+    <button id="applyBtn">✅ Применить настройки</button>
+  </div>
+
+  <script>
+    const tg = window.Telegram.WebApp;
+    tg.ready();
+    const canvas = document.getElementById('preview');
+    const ctx = canvas.getContext('2d');
+    let originalImage = null;
+
+    // Загрузка изображения пользователем
+    document.getElementById('upload').addEventListener('change', (e) => {
+      const file = e.target.files[0];
+      if (!file) return;
+      const reader = new FileReader();
+      reader.onload = (ev) => {
+        const img = new Image();
+        img.onload = () => {
+          originalImage = img;
+          drawPreview();
+        };
+        img.src = ev.target.result;
+      };
+      reader.readAsDataURL(file);
+    });
+
+    function getSettings() {
+      return {
+        brightness: parseInt(document.getElementById('brightness').value),
+        contrast: parseInt(document.getElementById('contrast').value),
+        saturation: parseInt(document.getElementById('saturation').value),
+        blur: parseFloat(document.getElementById('blur').value),
+        shadow: parseInt(document.getElementById('shadow').value),
+        border: parseInt(document.getElementById('border').value),
+        rounded: parseInt(document.getElementById('rounded').value),
+        grayscale: document.getElementById('grayscale').checked,
+        circle: document.getElementById('circle').checked
+      };
+    }
+
+    function drawPreview() {
+      if (!originalImage) return;
+      const s = getSettings();
+      const size = 512; // как в финальном стикере
+      canvas.width = size;
+      canvas.height = size;
+      ctx.clearRect(0, 0, size, size);
+      
+      // Масштабирование с сохранением пропорций
+      const imgW = originalImage.width;
+      const imgH = originalImage.height;
+      const scale = Math.min(size / imgW, size / imgH);
+      const drawW = imgW * scale;
+      const drawH = imgH * scale;
+      const offsetX = (size - drawW) / 2;
+      const offsetY = (size - drawH) / 2;
+
+      ctx.save();
+      
+      // Круглая или скруглённая маска
+      if (s.circle) {
+        ctx.beginPath();
+        ctx.arc(size/2, size/2, size/2, 0, Math.PI*2);
+        ctx.clip();
+      } else if (s.rounded > 0) {
+        roundRect(ctx, 0, 0, size, size, s.rounded);
+        ctx.clip();
+      }
+
+      // Тень
+      if (s.shadow > 0) {
+        ctx.shadowColor = 'rgba(0,0,0,0.5)';
+        ctx.shadowBlur = s.shadow / 2;
+        ctx.shadowOffsetX = s.shadow;
+        ctx.shadowOffsetY = s.shadow;
+      }
+
+      // CSS-фильтры (яркость, контраст, насыщенность, размытие, ч/б)
+      let filter = '';
+      if (s.grayscale) filter += 'grayscale(100%) ';
+      filter += `brightness(${100 + s.brightness}%) `;
+      filter += `contrast(${100 + s.contrast}%) `;
+      filter += `saturate(${100 + s.saturation}%) `;
+      if (s.blur > 0) filter += `blur(${s.blur}px)`;
+      ctx.filter = filter.trim() || 'none';
+
+      // Рамка
+      if (s.border > 0) {
+        ctx.fillStyle = '#000'; // чёрная рамка
+        ctx.fillRect(0, 0, size, size);
+        ctx.save();
+        if (s.circle) {
+          ctx.beginPath();
+          ctx.arc(size/2, size/2, size/2 - s.border, 0, Math.PI*2);
+          ctx.clip();
+        } else {
+          const innerR = Math.max(0, s.rounded - s.border);
+          roundRect(ctx, s.border, s.border, size - 2*s.border, size - 2*s.border, innerR);
+          ctx.clip();
+        }
+      }
+
+      // Рисуем изображение
+      ctx.drawImage(originalImage, offsetX, offsetY, drawW, drawH);
+      ctx.restore();
+    }
+
+    function roundRect(ctx, x, y, w, h, r) {
+      ctx.beginPath();
+      ctx.moveTo(x + r, y);
+      ctx.lineTo(x + w - r, y);
+      ctx.quadraticCurveTo(x + w, y, x + w, y + r);
+      ctx.lineTo(x + w, y + h - r);
+      ctx.quadraticCurveTo(x + w, y + h, x + w - r, y + h);
+      ctx.lineTo(x + r, y + h);
+      ctx.quadraticCurveTo(x, y + h, x, y + h - r);
+      ctx.lineTo(x, y + r);
+      ctx.quadraticCurveTo(x, y, x + r, y);
+      ctx.closePath();
+    }
+
+    // Перерисовка при любом изменении
+    document.querySelectorAll('input').forEach(input => {
+      input.addEventListener('input', drawPreview);
+      input.addEventListener('change', drawPreview);
+    });
+
+    // Отправка настроек в бота
+    document.getElementById('applyBtn').addEventListener('click', () => {
+      const settings = getSettings();
+      tg.sendData(JSON.stringify(settings));
+    });
+  </script>
+</body>
+</html>
